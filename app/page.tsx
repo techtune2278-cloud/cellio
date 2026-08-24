@@ -31,7 +31,7 @@ interface ProductTemplate { id: string; name: string }
 interface Item {
   id: string; cellar_id: string; categorie: string; produit: string;
   qte: number; unite: string; date_entree: string; date_peremption: string | null; notes: string | null;
-  millesime: string | null; date_fabrication: string | null;
+  millesime: string | null; domaine: string | null; date_fabrication: string | null;
 }
 
 export default function HomePage() {
@@ -61,6 +61,7 @@ export default function HomePage() {
   const [dateEntree, setDateEntree] = useState(new Date().toISOString().slice(0, 10))
   const [datePeremption, setDatePeremption] = useState('')
   const [millesime, setMillesime] = useState('')
+  const [domaine, setDomaine] = useState('')
   const [dateFabrication, setDateFabrication] = useState(new Date().toISOString().slice(0, 7)) // YYYY-MM
   const [notes, setNotes] = useState('')
   
@@ -104,13 +105,13 @@ export default function HomePage() {
     loadItems()
   }
 
-async function loadProductsForCategory(catName: string) {
+  async function loadProductsForCategory(catName: string) {
     const { data } = await supabase.from('product_templates').select('*, categories!inner(name)').eq('categories.name', catName)
     if (data) {
       // Filtre anti-doublons ULTRA robuste (ignore espaces et majuscules)
       const uniqueProductsMap = new Map()
       data.forEach(item => {
-        const key = item.name.trim().toLowerCase() // On nettoie le texte pour la comparaison
+        const key = item.name.trim().toLowerCase()
         if (!uniqueProductsMap.has(key)) {
           uniqueProductsMap.set(key, item)
         }
@@ -208,12 +209,11 @@ async function loadProductsForCategory(catName: string) {
     const isSec = eq?.is_secondary || false
     setModalContextIsSecondary(isSec)
 
-    // Réinitialisation complète des états de la modale
     setEditingItemId(null); 
     setIsCreatingCat(false); 
     setIsCreatingProd(false);
-    setNewCatInput('');  // <-- RAZ du champ libre catégorie
-    setNewProdInput(''); // <-- RAZ du champ libre produit
+    setNewCatInput('');
+    setNewProdInput('');
     
     const relevantCats = getRelevantCategories(isSec)
     if (relevantCats.length > 0) {
@@ -229,6 +229,7 @@ async function loadProductsForCategory(catName: string) {
     setDateEntree(new Date().toISOString().slice(0, 10))
     setDatePeremption('')
     setMillesime('')
+    setDomaine('')
     setDateFabrication(new Date().toISOString().slice(0, 7))
     setNotes('')
     setIsModalOpen(true)
@@ -242,8 +243,8 @@ async function loadProductsForCategory(catName: string) {
     setEditingItemId(item.id); 
     setSelectedCat(item.categorie); 
     setIsCreatingCat(false);
-    setNewCatInput('');  // <-- Sécurité
-    setNewProdInput(''); // <-- Sécurité
+    setNewCatInput('');
+    setNewProdInput('');
     
     loadProductsForCategory(item.categorie).then(() => { setSelectedProd(item.produit) })
     setQty(item.qte)
@@ -251,6 +252,7 @@ async function loadProductsForCategory(catName: string) {
     setDateEntree(item.date_entree || new Date().toISOString().slice(0, 10))
     setDatePeremption(item.date_peremption || '')
     setMillesime(item.millesime || '')
+    setDomaine(item.domaine || '')
     setDateFabrication(item.date_fabrication ? item.date_fabrication.slice(0, 7) : new Date().toISOString().slice(0, 7))
     setNotes(item.notes || '')
     setIsModalOpen(true)
@@ -264,8 +266,8 @@ async function loadProductsForCategory(catName: string) {
     setEditingItemId(null); 
     setSelectedCat(item.categorie); 
     setIsCreatingCat(false);
-    setNewCatInput('');  // <-- Sécurité
-    setNewProdInput(''); // <-- Sécurité
+    setNewCatInput('');
+    setNewProdInput('');
     
     loadProductsForCategory(item.categorie).then(() => { setSelectedProd(item.produit) });
     setQty(item.qte)
@@ -273,19 +275,19 @@ async function loadProductsForCategory(catName: string) {
     setDateEntree(item.date_entree || new Date().toISOString().slice(0, 10))
     setDatePeremption(item.date_peremption || '')
     setMillesime(item.millesime || '')
+    setDomaine(item.domaine || '')
     setDateFabrication(item.date_fabrication ? item.date_fabrication.slice(0, 7) : new Date().toISOString().slice(0, 7))
     setNotes(item.notes || '')
     setIsModalOpen(true);
   }
 
-async function handleSaveItem(e: React.FormEvent) {
+  async function handleSaveItem(e: React.FormEvent) {
     e.preventDefault()
     let finalCat = selectedCat
     
     // 1. Gestion de la catégorie
     if (isCreatingCat && newCatInput.trim()) {
       finalCat = newCatInput.trim()
-      // On vérifie si elle n'existe pas déjà (anti-doublon)
       const { data: existingCat } = await supabase.from('categories').select('id').ilike('name', finalCat).single()
       if (!existingCat) {
         await supabase.from('categories').insert([{ name: finalCat }])
@@ -307,7 +309,6 @@ async function handleSaveItem(e: React.FormEvent) {
       }
       
       if (realCatId) {
-        // On vérifie que le produit n'existe pas DÉJÀ pour cette catégorie
         const { data: existingProd } = await supabase.from('product_templates')
           .select('id').eq('category_id', realCatId).ilike('name', finalProd).maybeSingle()
           
@@ -331,6 +332,7 @@ async function handleSaveItem(e: React.FormEvent) {
       date_entree: dateEntree, 
       date_peremption: datePeremption || null, 
       millesime: !modalContextIsSecondary && millesime.trim() ? millesime.trim() : null,
+      domaine: !modalContextIsSecondary && domaine.trim() ? domaine.trim() : null,
       date_fabrication: modalContextIsSecondary && dateFabrication ? `${dateFabrication}-01` : null,
       notes: notes.trim() || null 
     }
@@ -369,7 +371,9 @@ async function handleSaveItem(e: React.FormEvent) {
       const matchProduit = i.produit.toLowerCase().includes(searchLower)
       const matchNote = i.notes ? i.notes.toLowerCase().includes(searchLower) : false
       const matchMillesime = i.millesime ? i.millesime.toLowerCase().includes(searchLower) : false
-      if (!matchProduit && !matchNote && !matchMillesime) return false
+      const matchDomaine = i.domaine ? i.domaine.toLowerCase().includes(searchLower) : false
+      
+      if (!matchProduit && !matchNote && !matchMillesime && !matchDomaine) return false
     }
     return true
   })
@@ -377,7 +381,6 @@ async function handleSaveItem(e: React.FormEvent) {
   const freezers = equipments.filter(e => !e.is_secondary)
   const fridges = equipments.filter(e => e.is_secondary)
   
-  // Catégories contextuelles pour la modale
   const filteredModalCategories = getRelevantCategories(modalContextIsSecondary)
 
   return (
@@ -385,7 +388,6 @@ async function handleSaveItem(e: React.FormEvent) {
       <section className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
         <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Mes Caves & Réserves</h2>
         
-        {/* Caves */}
         {freezers.length > 0 && (
           <div className="mb-3">
             <div className="flex flex-wrap gap-2">
@@ -407,7 +409,6 @@ async function handleSaveItem(e: React.FormEvent) {
           </div>
         )}
 
-        {/* Réserves / Celliers */}
         {fridges.length > 0 && (
           <div className="mb-4 pt-3 border-t border-slate-50">
             <div className="flex flex-wrap gap-2">
@@ -429,7 +430,6 @@ async function handleSaveItem(e: React.FormEvent) {
           </div>
         )}
 
-        {/* Formulaire d'ajout d'équipement */}
         <form onSubmit={handleAddEq} className="pt-3 border-t border-slate-100 space-y-2">
           <div className="flex gap-4 items-center mb-2 px-1">
             <label className="text-sm text-slate-600 font-medium flex items-center gap-1 cursor-pointer">
@@ -458,7 +458,7 @@ async function handleSaveItem(e: React.FormEvent) {
             <option value="">Toutes les catégories</option>
             {getRelevantCategories(equipments.find(e => String(e.id) === String(activeEqId))?.is_secondary || false).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
           </select>
-          <input type="text" placeholder="Rechercher un vin, un pot, millésime..." value={searchTxt} onChange={e => setSearchTxt(e.target.value)} className="px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-700 outline-none flex-1" />
+          <input type="text" placeholder="Rechercher vin, domaine, pot..." value={searchTxt} onChange={e => setSearchTxt(e.target.value)} className="px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-700 outline-none flex-1" />
         </div>
       </div>
 
@@ -486,6 +486,7 @@ async function handleSaveItem(e: React.FormEvent) {
                 <div>
                   <div className="flex justify-between items-start">
                     <div>
+                      {item.domaine && <span className="text-xs font-semibold text-rose-700 block mb-0.5">{item.domaine}</span>}
                       <h3 className="font-bold text-slate-800 text-base">
                         {item.produit} {!isSecondary && item.millesime && <span className="text-slate-500 font-normal">({item.millesime})</span>}
                       </h3>
@@ -579,23 +580,24 @@ async function handleSaveItem(e: React.FormEvent) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                {modalContextIsSecondary ? (
+              {!modalContextIsSecondary && (
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Fabriqué en (Mois/Année)</label>
-                    <input type="month" value={dateFabrication} onChange={e => setDateFabrication(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium outline-none focus:border-sky-500" />
+                    <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Domaine</label>
+                    <input type="text" placeholder="ex: Domaine de la Romanée..." value={domaine} onChange={e => setDomaine(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium outline-none focus:border-sky-500" />
                   </div>
-                ) : (
                   <div>
-                    <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Millésime (Année)</label>
+                    <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Millésime</label>
                     <input type="number" placeholder="ex: 2018" value={millesime} onChange={e => setMillesime(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium outline-none focus:border-sky-500" />
                   </div>
-                )}
-                <div>
-                  <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Apogée / DLC</label>
-                  <input type="date" value={datePeremption} onChange={e => setDatePeremption(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium outline-none focus:border-sky-500" />
                 </div>
-              </div>
+              )}
+              {modalContextIsSecondary && (
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Fabriqué en (Mois/Année)</label>
+                  <input type="month" value={dateFabrication} onChange={e => setDateFabrication(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium outline-none focus:border-sky-500" />
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -603,9 +605,14 @@ async function handleSaveItem(e: React.FormEvent) {
                   <input type="date" value={dateEntree} onChange={e => setDateEntree(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium outline-none focus:border-sky-500" />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Note (Emplacement...)</label>
-                  <input type="text" placeholder={modalContextIsSecondary ? "ex: Étagère du haut..." : "ex: Garder couché..."} value={notes} onChange={e => setNotes(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium outline-none focus:border-sky-500" />
+                  <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Apogée / DLC</label>
+                  <input type="date" value={datePeremption} onChange={e => setDatePeremption(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium outline-none focus:border-sky-500" />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Note (Emplacement...)</label>
+                <input type="text" placeholder={modalContextIsSecondary ? "ex: Étagère du haut..." : "ex: Garder couché..."} value={notes} onChange={e => setNotes(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium outline-none focus:border-sky-500" />
               </div>
               
               <div className="pt-2">
