@@ -23,7 +23,7 @@ const FRIDGE_COLORS = [
 ]
 
 const CAVE_UNITS = ['Bouteille (75cl)', 'Demi-bouteille (37.5cl)', 'Magnum (1.5L)', 'Jéroboam (3L)', 'Litre', 'Cubi / BIB', 'Caisse(s)', 'Carton(s)', 'Pièce(s)']
-const ARMOIRE_UNITS = ['Pot 250mL', 'Pot 500mL', 'Pot 750mL', 'Pot 1L', 'Pot 1,5L', 'Pot 2L', 'Gramme (g)', 'Kilo (kg)', 'Pièce(s)']
+const ARMOIRE_UNITS = ['Pot 250mL', 'Pot de 350mL', 'Pot 500mL', 'Pot 750mL', 'Pot 1L', 'Pot 1,5L', 'Pot 2L', 'Pot de confiture', 'Gramme (g)', 'Kilo (kg)', 'Pièce(s)']
 
 interface Equipment { id: string; name: string; is_secondary: boolean }
 interface Category { id: string; name: string }
