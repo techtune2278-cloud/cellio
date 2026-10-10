@@ -1,11 +1,11 @@
 {
-  "name": "CELLIO - Gestion de cave",
-  "short_name": "CELLIO",
-  "description": "Gérez vos caves et réserves simplement pour suivre vos vins et provisions.",
+  "name": "Cellio — Stocks du foyer",
+  "short_name": "Cellio",
+  "description": "Gérez vos caves, placards et réserves simplement.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#831843",
+  "background_color": "#faf6ef",
+  "theme_color": "#6b1931",
   "icons": [
     {
       "src": "/icon-192.png",

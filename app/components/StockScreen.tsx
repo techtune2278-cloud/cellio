@@ -1,0 +1,1184 @@
+"use client";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useApp, DataState } from "./AppProvider";
+import Dialog from "./Dialog";
+import EquipmentIcon from "./EquipmentIcon";
+import TransferDialog from "./TransferDialog";
+import { Item } from "../lib/types";
+import {
+  alertFor,
+  defaultExpiry,
+  localDay,
+  normalize,
+  isWine,
+  dateLabelFor,
+  contentTotal,
+} from "../lib/alerts";
+const units = [
+  "pièce(s)",
+  "portion(s)",
+  "tranche(s)",
+  "sachet(s)",
+  "boîte(s)",
+  "barquette(s)",
+  "kg",
+  "g",
+  "L",
+  "mL",
+  "Bouteille 25cl",
+  "Bouteille 33cl",
+  "Bouteille (75cl)",
+  "Pot 250mL",
+  "Pot 500mL",
+  "Pot 1L",
+  "Paquet(s)",
+];
+type Mode = "stock" | "alerts" | "inventory";
+type Action = "add" | "edit" | "use" | "discard" | "transfer" | "merge";
+interface Choice {
+  action: Action;
+  item?: Item;
+  copy?: boolean;
+}
+export default function StockScreen({ mode = "stock" }: { mode?: Mode }) {
+  return (
+    <DataState>
+      <StockContent mode={mode} />
+    </DataState>
+  );
+}
+function StockContent({ mode }: { mode: Mode }) {
+  const { data, refresh, loading, busy } = useApp(),
+    stock = data!;
+  const [search, setSearch] = useState(""),
+    [equipment, setEquipment] = useState(""),
+    [category, setCategory] = useState(""),
+    [sort, setSort] = useState(mode === "alerts" ? "urgent" : "name"),
+    [unassociated, setUnassociated] = useState(false),
+    [nature, setNature] = useState(""),
+    [originFilter, setOriginFilter] = useState(""),
+    [advanced, setAdvanced] = useState(false),
+    [from, setFrom] = useState(""),
+    [until, setUntil] = useState(""),
+    [dateField, setDateField] = useState("date_peremption"),
+    [choice, setChoice] = useState<Choice | null>(null);
+  const [offline, setOffline] = useState(false);
+  const [transferSource, setTransferSource] = useState<string | null>(null);
+  useEffect(() => {
+    const source = new URLSearchParams(window.location.search).get(
+      "transferFrom",
+    );
+    if (source) queueMicrotask(() => setTransferSource(source));
+  }, []);
+  useEffect(() => {
+    const key = "cellio_equipment_" + stock.username;
+    const saved = localStorage.getItem(key);
+    if (saved && stock.equipments.some((e) => e.id === saved && !e.archived_at))
+      queueMicrotask(() => setEquipment(saved));
+    const update = () => setOffline(!navigator.onLine);
+    queueMicrotask(update);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, [stock.username, stock.equipments]);
+  const active = stock.equipments.filter((e) => !e.archived_at);
+  const alerts = stock.items.filter((i) =>
+    alertFor(i, stock.equipments, stock.rules, stock.settings),
+  );
+  const categories = Array.from(
+    new Set([
+      ...stock.categories.map((c) => c.name),
+      ...stock.items.map((i) => i.categorie),
+    ]),
+  ).sort((a, b) => a.localeCompare(b, "fr"));
+  const visible = stock.items
+    .filter((i) => {
+      if (i.qte <= 0 && mode !== "inventory") return false;
+      if (
+        mode === "alerts" &&
+        !alertFor(i, stock.equipments, stock.rules, stock.settings)
+      )
+        return false;
+      if (unassociated && i.ingredient_id) return false;
+      if (nature && (i.product_type ?? "unknown") !== nature) return false;
+      if (originFilter && (i.preparation_origin ?? "unknown") !== originFilter)
+        return false;
+      if (equipment && i.cellar_id !== equipment) return false;
+      if (category && i.categorie !== category) return false;
+      if (
+        search &&
+        !normalize(
+          [
+            i.produit,
+            i.ingredient_name,
+            i.notes,
+            i.millesime,
+            i.domaine,
+            i.format,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        ).includes(normalize(search))
+      )
+        return false;
+      const date =
+        dateField === "date_entree" ? i.date_entree : i.date_peremption;
+      if (
+        (from || until) &&
+        (!date || (from && date < from) || (until && date > until))
+      )
+        return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sort === "urgent")
+        return (
+          (alertFor(a, stock.equipments, stock.rules, stock.settings)?.order ??
+            99999) -
+            (alertFor(b, stock.equipments, stock.rules, stock.settings)
+              ?.order ?? 99999) || a.produit.localeCompare(b.produit, "fr")
+        );
+      if (sort === "date")
+        return (a.date_peremption ?? "9999").localeCompare(
+          b.date_peremption ?? "9999",
+        );
+      if (sort === "entry")
+        return (a.date_entree ?? "9999").localeCompare(b.date_entree ?? "9999");
+      return a.produit.localeCompare(b.produit, "fr");
+    });
+  const clear = () => {
+    setSearch("");
+    setUnassociated(false);
+    setNature("");
+    setOriginFilter("");
+    setEquipment("");
+    setCategory("");
+    setFrom("");
+    setUntil("");
+    localStorage.removeItem("cellio_equipment_" + stock.username);
+  };
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">FOYER {stock.username}</p>
+          <h1>
+            {mode === "alerts"
+              ? "À utiliser en priorité"
+              : mode === "inventory"
+                ? "Faire le point sur le stock"
+                : "Mes stocks"}
+          </h1>
+          <p>
+            {mode === "inventory"
+              ? "Comparez les quantités au contenu réel, lot par lot."
+              : mode === "alerts"
+                ? "Des rappels pour choisir quoi utiliser ensuite."
+                : "Tout retrouver. Utiliser juste ce qu’il faut."}
+          </p>
+        </div>
+        <button
+          className="quiet"
+          disabled={loading}
+          onClick={() => void refresh()}
+          aria-label="Actualiser le stock"
+        >
+          {loading ? "…" : "↻"}
+        </button>
+      </div>
+      {offline && (
+        <div className="notice error" role="alert">
+          Vous êtes hors connexion. Le stock affiché peut être ancien ; les
+          modifications attendront votre reconnexion.
+        </div>
+      )}
+      <div className="inline-actions stock-shortcuts">
+        <Link className="button quiet" href="/settings#equipment">
+          Équipements
+        </Link>
+        {mode !== "inventory" && (
+          <button
+            className="secondary"
+            disabled={busy || offline || active.length < 2}
+            onClick={() => setTransferSource(equipment || active[0]?.id || "")}
+          >
+            Transférer des produits
+          </button>
+        )}
+        <Link className="button quiet" href="/settings#dates">
+          Dates et alertes
+        </Link>
+      </div>
+      <div className="toolbar">
+        <label>
+          Nature
+          <select value={nature} onChange={(e) => setNature(e.target.value)}>
+            <option value="">Toutes les natures</option>
+            <option value="food">Aliment</option>
+            <option value="beverage">Boisson</option>
+            <option value="wine">Vin</option>
+            <option value="unknown">Non précisée</option>
+          </select>
+        </label>
+        <label>
+          Origine
+          <select
+            value={originFilter}
+            onChange={(e) => setOriginFilter(e.target.value)}
+          >
+            <option value="">Toutes les origines</option>
+            <option value="bought">Acheté</option>
+            <option value="homemade">Fait maison</option>
+            <option value="unknown">Non précisée</option>
+          </select>
+        </label>
+      </div>
+      <div className="toolbar">
+        <label className="search">
+          <span className="sr-only">Rechercher un produit ou une note</span>
+          <input
+            type="search"
+            placeholder="Chercher un produit ou une note…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
+        <label>
+          <span className="sr-only">Emplacement</span>
+          <select
+            value={equipment}
+            onChange={(e) => {
+              setEquipment(e.target.value);
+              localStorage.setItem(
+                "cellio_equipment_" + stock.username,
+                e.target.value,
+              );
+            }}
+          >
+            <option value="">Tous les espaces</option>
+            {active.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.is_secondary ? "Réserve" : "Cave"} · {e.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="quiet"
+          aria-expanded={advanced}
+          onClick={() => setAdvanced(!advanced)}
+        >
+          Filtres{category || from || until ? " •" : ""}
+        </button>
+      </div>
+      {advanced && (
+        <section className="panel filters">
+          <label>
+            Catégorie
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            >
+              <option value="">Toutes</option>
+              {categories.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Trier par
+            <select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <option value="name">Nom</option>
+              <option value="urgent">Priorité</option>
+              <option value="date">Date de suivi</option>
+              <option value="entry">Ancienneté</option>
+            </select>
+          </label>
+          <label>
+            Type de date
+            <select
+              value={dateField}
+              onChange={(e) => setDateField(e.target.value)}
+            >
+              <option value="date_peremption">Date de suivi</option>
+              <option value="date_entree">Date d’entrée</option>
+            </select>
+          </label>
+          <label>
+            Du
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            />
+          </label>
+          <label>
+            Au
+            <input
+              type="date"
+              value={until}
+              onChange={(e) => setUntil(e.target.value)}
+            />
+          </label>
+          <button className="quiet" onClick={clear}>
+            Effacer les filtres
+          </button>
+        </section>
+      )}
+      {mode === "stock" && (
+        <Link className="priority-banner" href="/alerts">
+          <span>
+            <strong>{alerts.length}</strong> lot{alerts.length > 1 ? "s" : ""} à
+            vérifier
+          </span>
+          <span>À utiliser →</span>
+        </Link>
+      )}
+      {mode === "alerts" && (
+        <p className="muted">
+          Sans date limite, les rappels suivent l’ancienneté et vos seuils. Ils
+          ne garantissent pas la qualité du produit.{" "}
+          <Link href="/settings">Régler les alertes</Link>
+        </p>
+      )}
+      <div className="list-meta">
+        <span>
+          {visible.length} lot{visible.length > 1 ? "s" : ""}
+          {equipment ? " dans cet espace" : ""}
+        </span>
+        <Link href={mode === "inventory" ? "/" : "/inventory"}>
+          {mode === "inventory" ? "Retour aux stocks" : "Inventaire"}
+        </Link>
+        <Link href="/history">Historique</Link>
+      </div>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={unassociated}
+          onChange={(e) => setUnassociated(e.target.checked)}
+        />
+        Articles sans ingrédient associé
+      </label>
+      <div className="stock-list">
+        {visible.map((item) => {
+          const eq = stock.equipments.find((e) => e.id === item.cellar_id),
+            alert = alertFor(
+              item,
+              stock.equipments,
+              stock.rules,
+              stock.settings,
+            );
+          return (
+            <article className="stock-card" key={item.id}>
+              <div className="item-heading">
+                <div>
+                  <h2>
+                    {item.produit}
+                    {item.millesime ? ` · ${item.millesime}` : ""}
+                  </h2>
+                  {item.domaine && <p className="item-notes">{item.domaine}</p>}
+                  <p className="item-location">
+                    <EquipmentIcon secondary={!!eq?.is_secondary} />{" "}
+                    {eq?.name ?? "Emplacement à vérifier"}
+                    {eq?.archived_at ? " · archivé" : ""}
+                    <span> · {item.categorie}</span>
+                  </p>
+                </div>
+                <span className="quantity">
+                  {new Intl.NumberFormat("fr-FR", {
+                    maximumFractionDigits: 6,
+                  }).format(item.qte)}
+                  <small>{item.unite || "unité à vérifier"}</small>
+                </span>
+              </div>
+              {alert && (
+                <p
+                  className={`status ${alert.level === "overdue" ? "overdue" : ""}`}
+                >
+                  {alert.label}
+                </p>
+              )}
+              {!alert && (
+                <p className="item-date">
+                  {item.date_peremption
+                    ? `${item.date_kind === "estimated" ? "Date indicative" : isWine(item.categorie) ? "Apogée" : "Date de suivi"} : ${formatDate(item.date_peremption)}`
+                    : item.date_entree
+                      ? `Entré le ${formatDate(item.date_entree)}`
+                      : "Date non renseignée"}
+                </p>
+              )}
+              {item.format && (
+                <p className="item-notes">Format : {item.format}</p>
+              )}
+              {item.date_fabrication && (
+                <p className="item-date">
+                  Fabriqué le {formatDate(item.date_fabrication)}
+                </p>
+              )}
+              {item.ingredient_name && (
+                <p className="item-notes">
+                  Ingrédient : {item.ingredient_name}
+                </p>
+              )}
+              {contentTotal(item) && (
+                <p className="item-notes">
+                  {item.content_quantity} {item.content_unit} par {item.unite} ·{" "}
+                  {contentTotal(item)}
+                </p>
+              )}
+              {item.date_role && item.date_role !== "unknown" && (
+                <p className="item-notes">{dateLabelFor(item)}</p>
+              )}
+              {item.notes && <p className="item-notes">{item.notes}</p>}
+              {mode === "inventory" ? (
+                <InventoryRow item={item} disabled={busy || offline} />
+              ) : (
+                <div className="card-actions">
+                  <button
+                    className="secondary"
+                    disabled={busy || offline || item.qte <= 0}
+                    onClick={() => setChoice({ action: "use", item })}
+                  >
+                    Utiliser
+                  </button>
+                  <details className="item-menu">
+                    <summary aria-label={`Autres actions pour ${item.produit}`}>
+                      Autres actions
+                    </summary>
+                    <div>
+                      <button
+                        onClick={() => setChoice({ action: "edit", item })}
+                      >
+                        Modifier
+                      </button>
+                      <button
+                        onClick={() => setChoice({ action: "transfer", item })}
+                      >
+                        Déplacer
+                      </button>
+                      <button
+                        onClick={() => setChoice({ action: "merge", item })}
+                      >
+                        Regrouper avec un lot identique
+                      </button>
+                      <button
+                        onClick={() =>
+                          setChoice({ action: "add", item, copy: true })
+                        }
+                      >
+                        Nouvel achat similaire
+                      </button>
+                      <button
+                        className="danger"
+                        onClick={() => setChoice({ action: "discard", item })}
+                      >
+                        Jeter / retirer
+                      </button>
+                    </div>
+                  </details>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+      {!visible.length && (
+        <section className="panel empty">
+          <h2>
+            {stock.items.some((i) => i.qte > 0)
+              ? "Aucun résultat avec ces filtres"
+              : active.length
+                ? "Votre stock est prêt à être rempli"
+                : "Créez votre premier espace"}
+          </h2>
+          <p>
+            {mode === "alerts"
+              ? "Aucun lot ne correspond aux rappels actuels."
+              : active.length
+                ? "Ajoutez un produit ou élargissez la recherche."
+                : "Une cave ou une réserve, puis ses produits."}
+          </p>
+          {active.length ? (
+            <button className="quiet" onClick={clear}>
+              Effacer les filtres
+            </button>
+          ) : (
+            <Link className="button primary" href="/settings">
+              Ajouter un équipement
+            </Link>
+          )}
+        </section>
+      )}
+      <p className="sync">
+        Actualisé à{" "}
+        {new Date(stock.synchronizedAt).toLocaleTimeString("fr-FR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}
+      </p>
+      {mode !== "inventory" && (
+        <button
+          className="add-button primary"
+          disabled={busy || offline || !active.length}
+          onClick={() => setChoice({ action: "add" })}
+        >
+          + Ajouter un produit
+        </button>
+      )}
+      {choice && (
+        <StockDialog
+          choice={choice}
+          defaultEquipment={equipment || active[0]?.id || ""}
+          onClose={() => setChoice(null)}
+        />
+      )}
+      {transferSource !== null && (
+        <TransferDialog
+          initialSource={transferSource}
+          onClose={() => setTransferSource(null)}
+        />
+      )}
+    </>
+  );
+}
+function formatDate(value: string) {
+  return new Date(value + "T12:00:00").toLocaleDateString("fr-FR", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+function InventoryRow({ item, disabled }: { item: Item; disabled: boolean }) {
+  const { mutation } = useApp(),
+    version = useRef(item.version),
+    [qty, setQty] = useState(String(item.qte)),
+    [error, setError] = useState(""),
+    operation = useRef<{ key: string; id: string } | null>(null);
+  async function save() {
+    setError("");
+    const key = `${item.id}:${version.current}:${qty}`;
+    if (operation.current?.key !== key)
+      operation.current = { key, id: crypto.randomUUID() };
+    try {
+      await mutation("/api/stock", {
+        action: "inventory",
+        item_id: item.id,
+        qte: Number(qty),
+        version: version.current,
+        operation_id: operation.current.id,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Impossible de corriger.");
+    }
+  }
+  return (
+    <div className="inventory-row">
+      <label>
+        Quantité réelle
+        <input
+          type="number"
+          min="0"
+          step="any"
+          inputMode="decimal"
+          value={qty}
+          onChange={(e) => {
+            if (Number(qty) === item.qte) version.current = item.version;
+            setQty(e.target.value);
+          }}
+        />
+      </label>
+      <button
+        className="secondary"
+        disabled={disabled || qty === "" || Number(qty) === item.qte}
+        onClick={() => void save()}
+      >
+        Corriger
+      </button>
+      {error && (
+        <p className="notice error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+function StockDialog({
+  choice,
+  defaultEquipment,
+  onClose,
+}: {
+  choice: Choice;
+  defaultEquipment: string;
+  onClose: () => void;
+}) {
+  const { data, mutation, busy } = useApp(),
+    stock = data!,
+    original = choice.item;
+  const [produit, setProduit] = useState(original?.produit ?? ""),
+    [category, setCategory] = useState(original?.categorie ?? ""),
+    [qty, setQty] = useState(String(original?.qte ?? 1)),
+    [unit, setUnit] = useState(
+      original?.unite ||
+        (stock.equipments.find((e) => e.id === defaultEquipment)?.is_secondary
+          ? "pièce(s)"
+          : "Bouteille (75cl)"),
+    ),
+    [entry, setEntry] = useState(
+      choice.action === "edit" ? (original?.date_entree ?? "") : localDay(),
+    ),
+    [expiry, setExpiry] = useState(
+      choice.action === "edit" ? (original?.date_peremption ?? "") : "",
+    ),
+    [notes, setNotes] = useState(
+      choice.action === "edit" ? (original?.notes ?? "") : "",
+    ),
+    [equipment, setEquipment] = useState(
+      choice.action === "transfer" ? "" : defaultEquipment,
+    ),
+    [amount, setAmount] = useState(
+      String(
+        choice.action === "discard"
+          ? original?.qte
+          : original?.unite === "kg" || original?.unite === "L"
+            ? Math.min(original?.qte ?? 1, 0.1)
+            : Math.min(original?.qte ?? 1, 1),
+      ),
+    ),
+    [error, setError] = useState(""),
+    [another, setAnother] = useState(false);
+  const [vintage, setVintage] = useState(original?.millesime ?? "");
+  const [domain, setDomain] = useState(original?.domaine ?? "");
+  const [format, setFormat] = useState(original?.format ?? "");
+  const [fabrication, setFabrication] = useState(
+    original?.date_fabrication ?? "",
+  );
+  const [wineDetails, setWineDetails] = useState(
+    !!original?.millesime || !!original?.domaine,
+  );
+  const [ingredient, setIngredient] = useState(original?.ingredient_id ?? "");
+  const [content, setContent] = useState(
+    original?.content_quantity == null ? "" : String(original.content_quantity),
+  );
+  const [contentUnit, setContentUnit] = useState(original?.content_unit ?? "g");
+  const [productType, setProductType] = useState(original?.product_type ?? "");
+  const [preparationOrigin, setPreparationOrigin] = useState(
+    original?.preparation_origin ?? "",
+  );
+  const [dateRole, setDateRole] = useState(original?.date_role ?? "unknown");
+  const [useEstimate, setUseEstimate] = useState(choice.action === "add");
+  const [dateKind, setDateKind] = useState(original?.date_kind ?? "declared");
+  const estimate =
+    choice.action === "add"
+      ? defaultExpiry(
+          category,
+          stock.equipments.find((e) => e.id === equipment),
+          stock.rules,
+          entry,
+        )
+      : null;
+  const effectiveExpiry = expiry || (useEstimate ? estimate : null);
+  const operation = useRef<{ key: string; id: string } | null>(null);
+  const editing = choice.action === "add" || choice.action === "edit";
+  const title = {
+    add: choice.copy ? "Nouvel achat similaire" : "Ajouter un produit",
+    edit: "Modifier le lot",
+    use: "Utiliser une quantité",
+    discard: "Retirer du stock",
+    transfer: "Déplacer le lot",
+    merge: "Regrouper les lots identiques",
+  }[choice.action];
+  const categories = Array.from(
+    new Set([
+      ...stock.categories.map((c) => c.name),
+      ...stock.items.map((i) => i.categorie),
+    ]),
+  );
+  const products = Array.from(
+    new Set([
+      ...stock.templates.map((t) => t.name),
+      ...stock.items.map((i) => i.produit),
+    ]),
+  );
+  function selectProduct(value: string) {
+    setProduit(value);
+    if (choice.action === "add") {
+      const template = stock.templates.find(
+        (t) => normalize(t.name) === normalize(value),
+      );
+      const c = stock.categories.find((c) => c.id === template?.category_id);
+      if (c) setCategory(c.name);
+      const previous = stock.items.find(
+        (i) => normalize(i.produit) === normalize(value),
+      );
+      if (previous) {
+        setUnit(previous.unite || "pièce(s)");
+        if (!c) setCategory(previous.categorie);
+      }
+    }
+  }
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    if (!navigator.onLine) {
+      setError("Reconnectez-vous avant d’enregistrer.");
+      return;
+    }
+    const input: Record<string, unknown> = {
+      action: choice.action,
+      item_id: original?.id,
+    };
+    if (editing)
+      Object.assign(input, {
+        produit,
+        categorie: category,
+        qte: Number(qty),
+        unite: unit,
+        date_entree: entry || null,
+        date_peremption: effectiveExpiry || null,
+        date_kind: expiry
+          ? dateKind
+          : effectiveExpiry
+            ? "estimated"
+            : "declared",
+        notes: notes || null,
+        ingredient_id: ingredient || null,
+        content_quantity: content === "" ? null : Number(content),
+        content_unit: content === "" ? null : contentUnit,
+        product_type: productType || null,
+        preparation_origin: preparationOrigin || null,
+        date_role: !effectiveExpiry
+          ? "unknown"
+          : !expiry
+            ? "indicative"
+            : dateRole,
+        millesime: vintage || null,
+        domaine: domain || null,
+        format: format || null,
+        date_fabrication: fabrication || null,
+        version: original?.version,
+      });
+    if (choice.action === "add" || choice.action === "transfer")
+      input.cellar_id = equipment;
+    if (!editing && choice.action !== "merge") input.amount = Number(amount);
+    if (choice.action === "merge") input.version = original?.version;
+    const key = JSON.stringify(input);
+    if (operation.current?.key !== key)
+      operation.current = { key, id: crypto.randomUUID() };
+    try {
+      await mutation("/api/stock", {
+        ...input,
+        operation_id: operation.current.id,
+      });
+      if (choice.action === "add" && another) {
+        setProduit("");
+        setQty("1");
+        setExpiry("");
+        setNotes("");
+        setVintage("");
+        setDomain("");
+        setFormat("");
+        setFabrication("");
+        operation.current = null;
+      } else onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Impossible d’enregistrer.");
+    }
+  }
+  return (
+    <Dialog title={title} onClose={onClose} busy={busy}>
+      <form onSubmit={save}>
+        {editing ? (
+          <>
+            <label>
+              Produit
+              <input
+                autoFocus
+                list="product-options"
+                required
+                maxLength={200}
+                value={produit}
+                onChange={(e) => selectProduct(e.target.value)}
+                placeholder="Ex. Bordeaux, compote de pommes…"
+              />
+              <datalist id="product-options">
+                {products.map((p) => (
+                  <option key={p} value={p} />
+                ))}
+              </datalist>
+            </label>
+            <details className="more">
+              <summary>Ingrédient et contenu du contenant</summary>
+              <label>
+                Ingrédient officiel (facultatif)
+                <select
+                  value={ingredient}
+                  onChange={(e) => setIngredient(e.target.value)}
+                >
+                  <option value="">Non associé</option>
+                  {ingredient &&
+                    !(stock.ingredients ?? []).some(
+                      (i) => i.id === ingredient,
+                    ) && (
+                      <option value={ingredient}>
+                        {original?.ingredient_name ?? "Association existante"}
+                      </option>
+                    )}
+                  {(stock.ingredients ?? []).map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="muted">
+                Le nom affiché du produit reste libre. Importez le référentiel
+                Mealio dans Réglages pour associer les articles.
+              </p>
+              <label>
+                Contenu par unité de stock (facultatif)
+                <input
+                  type="number"
+                  min="0.000001"
+                  step="any"
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  placeholder="Ex. 250 par pot"
+                />
+              </label>
+              <label>
+                Unité du contenu
+                <select
+                  value={contentUnit}
+                  onChange={(e) =>
+                    setContentUnit(e.target.value as typeof contentUnit)
+                  }
+                >
+                  <option value="g">g</option>
+                  <option value="mL">mL</option>
+                  <option value="pièce(s)">pièce(s)</option>
+                </select>
+              </label>
+              <p className="muted">
+                Aucun suivi d’ouverture. Sans contenu renseigné, la quantité et
+                l’unité actuelles restent utilisées.
+              </p>
+            </details>
+            <div className="form-row">
+              <label>
+                Quantité
+                <input
+                  type="number"
+                  required
+                  min={choice.action === "add" ? "0.000001" : "0"}
+                  step="any"
+                  inputMode="decimal"
+                  value={qty}
+                  onChange={(e) => setQty(e.target.value)}
+                />
+              </label>
+              <label>
+                Unité
+                <input
+                  list="unit-options"
+                  required
+                  maxLength={60}
+                  value={unit}
+                  onChange={(e) => setUnit(e.target.value)}
+                />
+                <datalist id="unit-options">
+                  {units.map((u) => (
+                    <option key={u} value={u} />
+                  ))}
+                </datalist>
+              </label>
+            </div>
+            <label>
+              Catégorie
+              <input
+                required
+                list="category-options"
+                maxLength={200}
+                placeholder="Ex. Épicerie, Confitures, Vins Rouges…"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+              />
+              <datalist id="category-options">
+                {categories.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </label>
+            {choice.action === "add" && (
+              <label>
+                Ranger dans
+                <select
+                  required
+                  value={equipment}
+                  onChange={(e) => setEquipment(e.target.value)}
+                >
+                  {stock.equipments
+                    .filter((e) => !e.archived_at)
+                    .map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.is_secondary ? "Réserve" : "Cave"} · {e.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
+            <label>
+              {isWine(category)
+                ? "Apogée souhaitée (facultative)"
+                : "Date de suivi / emballage (facultative)"}
+              <input
+                type="date"
+                value={expiry}
+                onChange={(e) => {
+                  setExpiry(e.target.value);
+                  setDateKind("declared");
+                }}
+              />
+            </label>
+            {expiry && dateKind === "estimated" && (
+              <p className="muted">
+                Ce lot porte une date indicative calculée. Une modification
+                manuelle devient une date saisie.
+              </p>
+            )}
+            {!expiry && estimate && (
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={useEstimate}
+                  onChange={(e) => setUseEstimate(e.target.checked)}
+                />
+                Utiliser la date indicative par défaut : {formatDate(estimate)}
+              </label>
+            )}
+            {!effectiveExpiry && (
+              <p className="muted">
+                Sans date, le rappel utilisera le délai de cette catégorie et de
+                cet équipement, depuis la date d’entrée.
+              </p>
+            )}
+            <details
+              className="more"
+              open={isWine(category) || wineDetails}
+              onToggle={(e) => setWineDetails(e.currentTarget.open)}
+            >
+              <summary>Domaine et millésime (vins)</summary>
+              <label>
+                Domaine
+                <input
+                  maxLength={200}
+                  value={domain}
+                  onChange={(e) => setDomain(e.target.value)}
+                  placeholder="Ex. Capdevielle"
+                />
+              </label>
+              <label>
+                Millésime
+                <input
+                  maxLength={30}
+                  value={vintage}
+                  onChange={(e) => setVintage(e.target.value)}
+                  placeholder="Ex. 2019 ou sans année"
+                />
+              </label>
+            </details>
+            <details className="more">
+              <summary>Nature du produit et rôle de la date</summary>
+              <label>
+                Nature
+                <select
+                  value={productType}
+                  onChange={(e) =>
+                    setProductType(e.target.value as typeof productType)
+                  }
+                >
+                  <option value="">À préciser</option>
+                  <option value="food">Aliment</option>
+                  <option value="beverage">Boisson</option>
+                  <option value="wine">Vin</option>
+                </select>
+              </label>
+              <label>
+                Origine
+                <select
+                  value={preparationOrigin}
+                  onChange={(e) =>
+                    setPreparationOrigin(
+                      e.target.value as typeof preparationOrigin,
+                    )
+                  }
+                >
+                  <option value="">À préciser</option>
+                  <option value="bought">Acheté</option>
+                  <option value="homemade">Fait maison</option>
+                </select>
+              </label>
+              <label>
+                Rôle de la date saisie
+                <select
+                  value={dateRole}
+                  onChange={(e) =>
+                    setDateRole(e.target.value as typeof dateRole)
+                  }
+                >
+                  <option value="unknown">À préciser</option>
+                  <option value="dlc">DLC</option>
+                  <option value="ddm">DDM</option>
+                  <option value="apogee">Apogée souhaitée</option>
+                  <option value="indicative">Date indicative</option>
+                </select>
+              </label>
+            </details>
+            <details className="more">
+              <summary>Plus de détails</summary>
+              <label>
+                Date de fabrication (facultative)
+                <input
+                  type="date"
+                  value={fabrication}
+                  onChange={(e) => setFabrication(e.target.value)}
+                />
+              </label>
+              <label>
+                Format du contenant (facultatif)
+                <input
+                  maxLength={100}
+                  value={format}
+                  onChange={(e) => setFormat(e.target.value)}
+                  placeholder="Ex. pot 250 mL, magnum"
+                />
+              </label>
+              <label>
+                Date d’entrée
+                <input
+                  type="date"
+                  value={entry}
+                  onChange={(e) => setEntry(e.target.value)}
+                />
+              </label>
+              <label>
+                Notes
+                <textarea
+                  maxLength={2000}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Marque, tiroir, préparation…"
+                />
+              </label>
+            </details>
+            {choice.action === "add" && (
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={another}
+                  onChange={(e) => setAnother(e.target.checked)}
+                />
+                Ajouter un autre produit ensuite
+              </label>
+            )}
+          </>
+        ) : choice.action === "merge" ? (
+          <>
+            <p>
+              Regrouper <strong>{original?.produit}</strong> ({original?.qte}{" "}
+              {original?.unite}) avec un autre lot strictement identique dans le
+              même équipement ?
+            </p>
+            <p>
+              Les quantités seront additionnées. Produit, catégorie, unité,
+              dates, notes, domaine, millésime et format doivent correspondre.
+              Vous pourrez annuler cette opération dans l’historique tant que
+              les lots n’ont pas changé.
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              <strong>{original?.produit}</strong> · {original?.qte}{" "}
+              {original?.unite} disponibles
+            </p>
+            <label>
+              {choice.action === "transfer"
+                ? "Quantité à déplacer"
+                : "Quantité à retirer"}{" "}
+              ({original?.unite})
+              <input
+                autoFocus
+                type="number"
+                required
+                min="0.000001"
+                max={original?.qte}
+                step="any"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="quiet"
+              onClick={() => setAmount(String(original?.qte))}
+            >
+              Tout le lot
+            </button>
+            {choice.action === "transfer" && (
+              <label>
+                Destination
+                <select
+                  required
+                  value={equipment}
+                  onChange={(e) => setEquipment(e.target.value)}
+                >
+                  <option value="">Choisir un autre espace</option>
+                  {stock.equipments
+                    .filter(
+                      (e) => !e.archived_at && e.id !== original?.cellar_id,
+                    )
+                    .map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.is_secondary ? "Réserve" : "Cave"} · {e.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
+            {choice.action === "discard" && (
+              <p className="notice">
+                Ce retrait sera enregistré séparément d’une consommation. Vous
+                pourrez l’annuler depuis l’historique si le lot n’a pas changé.
+              </p>
+            )}
+          </>
+        )}
+        {error && (
+          <p role="alert" className="notice error">
+            {error}
+          </p>
+        )}
+        <div className="dialog-footer">
+          <button className="primary" disabled={busy}>
+            {busy
+              ? "Enregistrement…"
+              : choice.action === "merge"
+                ? "Confirmer le regroupement"
+                : choice.action === "transfer"
+                  ? "Déplacer"
+                  : choice.action === "use"
+                    ? "Confirmer l’utilisation"
+                    : choice.action === "discard"
+                      ? "Confirmer le retrait"
+                      : "Enregistrer"}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
